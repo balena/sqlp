@@ -93,9 +93,12 @@ class SQLParser(object):
     'begin':'BEGIN',
     'between':'BETWEEN',
     'bigint':'BIGINT',
+    'blob':'BLOB',
     'by':'BY',
+    'cascade':'CASCADE',
     'case':'CASE',
     'cast':'CAST',
+    'chain':'CHAIN',
     'change':'CHANGE',
     'character':'CHARACTER',
     'char':'CHAR',
@@ -103,6 +106,8 @@ class SQLParser(object):
     'close':'CLOSE',
     'collate':'COLLATE',
     'column':'COLUMN',
+    'commit':'COMMIT',
+    'consistent':'CONSISTENT',
     'constraint':'CONSTRAINT',
     'convert':'CONVERT',
     'create':'CREATE',
@@ -151,14 +156,17 @@ class SQLParser(object):
     'left':'LEFT',
     'like':'LIKE',
     'limit':'LIMIT',
+    'longblob':'LONGBLOB',
     'longtext':'LONGTEXT',
     'loop':'LOOP',
     'low_priority':'LOW_PRIORITY',
+    'mediumblob':'MEDIUMBLOB',
     'mediumint':'MEDIUMINT',
     'mediumtext':'MEDIUMTEXT',
     'modify':'MODIFY',
     'natural':'NATURAL',
     'next':'NEXT',
+    'no':'NO',
     'not':'NOT',
     'null':'NULL',
     'numeric':'NUMERIC',
@@ -172,26 +180,33 @@ class SQLParser(object):
     'primary':'PRIMARY',
     'quick':'QUICK',
     'regexp':'REGEXP',
+    'release':'RELEASE',
     'rename':'RENAME',
     'repeat':'REPEAT',
+    'restrict':'RESTRICT',
     'return':'RETURN',
     'right':'RIGHT',
+    'rollback':'ROLLBACK',
     'row':'ROW',
     'select':'SELECT',
     'session':'SESSION',
     'set':'SET',
     'signed':'SIGNED',
     'smallint':'SMALLINT',
+    'snapshot':'SNAPSHOT',
     'sounds':'SOUNDS',
+    'start':'START',
     'table':'TABLE',
     'temporary':'TEMPORARY',
     'text':'TEXT',
     'then':'THEN',
     'timestamp':'TIMESTAMP',
     'time':'TIME',
+    'tinyblob':'TINYBLOB',
     'tinyint':'TINYINT',
     'tinytext':'TINYTEXT',
     'to':'TO',
+    'transaction':'TRANSACTION',
     'trigger':'TRIGGER',
     'true':'TRUE',
     'unique':'UNIQUE',
@@ -208,11 +223,9 @@ class SQLParser(object):
     'when':'WHEN',
     'where':'WHERE',
     'while':'WHILE',
+    'with':'WITH',
+    'work':'WORK',
     'xor':'XOR',
-    'tinyblob':'TINYBLOB',
-    'blob':'BLOB',
-    'mediumblob':'MEDIUMBLOB',
-    'longblob':'LONGBLOB',
     }
 
   tokens = [
@@ -1007,10 +1020,23 @@ class SQLParser(object):
     """if_exists : IF EXISTS """
     p[0] = {'if_exists':True}
 
+  def p_opt_restrict_cascade_empty(self, p):
+    """opt_restrict_cascade : """
+    p[0] = {}
+
+  def p_opt_restrict_cascade1(self, p):
+    """opt_restrict_cascade : RESTRICT """
+    p[0] = {'restrict':True}
+
+  def p_opt_restrict_cascade2(self, p):
+    """opt_restrict_cascade : CASCADE """
+    p[0] = {'cascade':True}
+
   def p_drop_table(self, p):
-    """drop_table : DROP temporary TABLE if_exists ident_list """
+    """drop_table : DROP temporary TABLE if_exists ident_list opt_restrict_cascade """
     args = dict({'location':self._location(p)},**p[2])
     args.update(p[4])
+    args.update(p[6])
     p[0] = [('drop_table',p[5],args)]
 
   def p_position_opt_empty(self, p):
@@ -1898,12 +1924,70 @@ class SQLParser(object):
     p[0] = [('add_index',p[6],p[8],dict({'name':p[4],'location':self._location(p)},**p[2]))]
 
   def p_drop_view(self, p):
-    """drop_view : DROP VIEW if_exists ident_list """
+    """drop_view : DROP VIEW if_exists ident_list opt_restrict_cascade """
     args = dict({'location':self._location(p)},**p[3])
+    args.update(p[5])
     result = []
     for i in p[4]:
       result.append(('drop_view',i,args))
     p[0] = result
+
+  def p_opt_work(self, p):
+    """opt_work : WORK
+                | """
+    pass
+
+  def p_opt_with_consistent_snapshot_empty(self, p):
+    """opt_with_consistent_snapshot : """
+    p[0] = {}
+
+  def p_opt_with_consistent_snapshot(self, p):
+    """opt_with_consistent_snapshot : WITH CONSISTENT SNAPSHOT """
+    p[0] = {'consistent_snapshot':True}
+
+  def p_start_transaction(self, p):
+    """start_transaction : START TRANSACTION opt_with_consistent_snapshot """
+    p[0] = [('start_transaction',dict({'location':self._location(p)},**p[3]))]
+
+  def p_start_transaction_begin(self, p):
+    """start_transaction : BEGIN opt_work """
+    p[0] = [('start_transaction',{'location':self._location(p)})]
+
+  def p_opt_chain_empty(self, p):
+    """opt_chain : """
+    p[0] = {}
+
+  def p_opt_chain_no_chain(self, p):
+    """opt_chain : AND NO CHAIN """
+    p[0] = {'chain':False}
+
+  def p_opt_chain(self, p):
+    """opt_chain : AND CHAIN """
+    p[0] = {'chain':True}
+
+  def p_opt_release_empty(self, p):
+    """opt_release : """
+    p[0] = {}
+
+  def p_opt_no_release(self, p):
+    """opt_release : NO RELEASE """
+    p[0] = {'release':False}
+
+  def p_opt_release(self, p):
+    """opt_release : RELEASE """
+    p[0] = {'release':True}
+
+  def p_commit(self, p):
+    """commit : COMMIT opt_work opt_chain opt_release """
+    args = dict({'location':self._location(p)},**p[3])
+    args.update(p[4])
+    p[0] = [('commit',args)]
+
+  def p_rollback(self, p):
+    """rollback : ROLLBACK opt_work opt_chain opt_release """
+    args = dict({'location':self._location(p)},**p[3])
+    args.update(p[4])
+    p[0] = [('rollback',args)]
 
   def p_statement(self, p):
     """statement : alter_table 
@@ -1920,7 +2004,10 @@ class SQLParser(object):
                  | rename_table
                  | select
                  | set
-                 | update """
+                 | update 
+                 | start_transaction
+                 | commit
+                 | rollback """
     p[0] = p[1]
 
   def p_statements_empty(self, p):
@@ -2011,7 +2098,6 @@ class SQLParser(object):
   # public Interface -------------------------------------------------------
 
   def __init__(self, outputdir=os.path.join(os.path.dirname(__file__)), debug=0):
-    print outputdir
     self.delim = self.t_DELIM
     self.lexer = lex.lex(object=self,
                          debug=debug,
@@ -2131,6 +2217,8 @@ if __name__ == '__main__':
   o = OptionParser()
   o.add_option('--regen', action='store_true', dest='regen', default=False,
          help="Regenerate SQL Parser cache")
+  o.add_option('--debug', action='store_true', dest='debug', default=False,
+         help="Enable debug")
   options, args = o.parse_args()
   files = args[0:] if args else None
 
@@ -2143,7 +2231,7 @@ if __name__ == '__main__':
         os.remove(filename)
 
   # Instantiate the parser.
-  p = SQLParser()
+  p = SQLParser(debug=options.debug)
 
   if options.regen:
     sys.exit(0)
