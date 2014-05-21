@@ -1,0 +1,5 @@
+syntax: glob
+*.pyc
+sqlp/sqlplex.py
+sqlp/sqlpyacc.py
+sqlp_debug
