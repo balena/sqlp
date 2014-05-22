@@ -16,18 +16,24 @@ from ply import lex, yacc
 
 
 def after(l, start):
-  result = -1
   s = start[:]
   x = l[:]
-  while len(x) > 0:
-    y = x[0]
+  s.reverse()
+  x.reverse()
+  count = 0
+  while len(x) > 0 and s[0] != x[0]:
+    count += 1
     del x[0]
-    if y == s[0]:
+  if len(x) == 0:
+    return -1
+  del s[0]
+  while len(x) > 0 and len(s) > 0:
+    if s[0] == x[0]:
       del s[0]
-      if len(s) == 0:
-        result = len(x)
-        break
-  return result
+    del x[0]
+  if len(s) > 0:
+    return -1
+  return count
 
 class Location(dict):
   _line = None
@@ -86,13 +92,18 @@ class SQLParser(object):
     'after':'AFTER',
     'all':'ALL',
     'alter':'ALTER',
+    'any':'ANY',
     'as':'AS',
     'asc':'ASC',
     'auto_increment':'AUTO_INCREMENT',
+    'avg':'AVG',
     'before':'BEFORE',
     'begin':'BEGIN',
     'between':'BETWEEN',
     'bigint':'BIGINT',
+    'bit_and':'BIT_AND',
+    'bit_or':'BIT_OR',
+    'bit_xor':'BIT_XOR',
     'blob':'BLOB',
     'by':'BY',
     'cascade':'CASCADE',
@@ -110,8 +121,10 @@ class SQLParser(object):
     'consistent':'CONSISTENT',
     'constraint':'CONSTRAINT',
     'convert':'CONVERT',
+    'count':'COUNT',
     'create':'CREATE',
     'cross':'CROSS',
+    'cube':'CUBE',
     'date':'DATE',
     'datetime':'DATETIME',
     'decimal':'DECIMAL',
@@ -122,6 +135,7 @@ class SQLParser(object):
     'distinct':'DISTINCT',
     'do':'DO',
     'drop':'DROP',
+    'dual':'DUAL',
     'each':'EACH',
     'else':'ELSE',
     'elseif':'ELSEIF',
@@ -139,6 +153,7 @@ class SQLParser(object):
     'from':'FROM',
     'global':'GLOBAL',
     'group':'GROUP',
+    'having':'HAVING',
     'if':'IF',
     'ignore':'IGNORE',
     'index':'INDEX',
@@ -160,9 +175,11 @@ class SQLParser(object):
     'longtext':'LONGTEXT',
     'loop':'LOOP',
     'low_priority':'LOW_PRIORITY',
+    'max':'MAX',
     'mediumblob':'MEDIUMBLOB',
     'mediumint':'MEDIUMINT',
     'mediumtext':'MEDIUMTEXT',
+    'min':'MIN',
     'modify':'MODIFY',
     'natural':'NATURAL',
     'next':'NEXT',
@@ -187,6 +204,7 @@ class SQLParser(object):
     'return':'RETURN',
     'right':'RIGHT',
     'rollback':'ROLLBACK',
+    'rollup':'ROLLUP',
     'row':'ROW',
     'select':'SELECT',
     'session':'SESSION',
@@ -194,8 +212,10 @@ class SQLParser(object):
     'signed':'SIGNED',
     'smallint':'SMALLINT',
     'snapshot':'SNAPSHOT',
+    'some':'SOME',
     'sounds':'SOUNDS',
     'start':'START',
+    'sum':'SUM',
     'table':'TABLE',
     'temporary':'TEMPORARY',
     'text':'TEXT',
@@ -433,6 +453,19 @@ class SQLParser(object):
     """boolean_primary : boolean_primary comparison_operator predicate """
     p[0] = (p[2],p[1],p[3])
 
+  def p_all_or_any1(self, p):
+    """all_or_any : ALL """
+    p[0] = 'all'
+
+  def p_all_or_any2(self, p):
+    """all_or_any : ANY
+                  | SOME """
+    p[0] = 'any'
+
+  def p_boolean_primary_all_any(self, p):
+    """boolean_primary : boolean_primary comparison_operator all_or_any '(' subquery ')' """
+    p[0] = (p[2],p[1],(p[3],p[5]))
+
   def p_boolean_primary_pred(self, p):
     """boolean_primary : predicate """
     p[0] = p[1]
@@ -453,6 +486,10 @@ class SQLParser(object):
   def p_expr_list(self, p):
     """expr_list : expr ',' expr_list """
     p[0] = [p[1]] + p[3]
+
+  def p_predicate_in_subquery(self, p):
+    """predicate : bit_expr not_opt IN '(' subquery ')' """
+    p[0] = p[2](('in',p[1],p[5]))
 
   def p_predicate_in(self, p):
     """predicate : bit_expr not_opt IN '(' expr_list ')' """
@@ -547,13 +584,25 @@ class SQLParser(object):
     """simple_expr : function_call """
     p[0] = p[1]
 
+  def p_subquery(self, p):
+    """subquery : select """
+    p[0] = p[1][0]
+
   def p_simple_expr_subquery(self, p):
-    """simple_expr : '(' select ')' """
+    """simple_expr : '(' subquery ')' """
     p[0] = ('(',p[2])
 
-  def p_simple_expr_group(self, p):
-    """simple_expr : '(' expr ')' """
+  def p_simple_expr_exists(self, p):
+    """simple_expr : EXISTS '(' subquery ')' """
+    p[0] = ('exists',p[3])
+
+  def p_simple_expr_paren(self, p):
+    """simple_expr : '(' expr_list ')' """
     p[0] = ('(',p[2])
+
+  def p_simple_expr_row(self, p):
+    """simple_expr : ROW '(' expr_list ')' """
+    p[0] = ('row',p[2])
 
   def p_convert_function(self, p):
     """convert_function : CONVERT '(' expr USING IDENT ')' """
@@ -603,6 +652,53 @@ class SQLParser(object):
     """cast_function : CAST '(' expr AS cast_type ')' """
     p[0] = ('cast',p[3],p[5])
 
+  def p_opt_distinct_empty(self, p):
+    """opt_distinct : """
+    p[0] = lambda x: x
+
+  def p_opt_distinct(self, p):
+    """opt_distinct : DISTINCT """
+    p[0] = lambda x: ('distinct',x)
+
+  def p_average_function(self, p):
+    """average_function : AVG '(' opt_distinct expr ')' """
+    p[0] = ('avg',p[3](p[4]))
+
+  def p_bit_function(self, p):
+    """bit_function : BIT_AND '(' expr ')'
+                    | BIT_OR '(' expr ')'
+                    | BIT_XOR '(' expr ')' """
+    p[0] = (p[1].lower(),p[3])
+
+  def p_opt_all(self, p):
+    """opt_all : ALL
+               | """
+    pass
+
+  def p_count_function_wild(self, p):
+    """count_function : COUNT '(' opt_all '*' ')' """
+    p[0] = ('count','*')
+
+  def p_count_function(self, p):
+    """count_function : COUNT '(' expr ')' """
+    p[0] = ('count',p[3])
+
+  def p_count_function_distinct(self, p):
+    """count_function : COUNT '(' DISTINCT expr_list ')' """
+    p[0] = ('count',('distinct',p[4]))
+
+  def p_max_function(self, p):
+    """max_function : MAX '(' opt_distinct expr ')' """
+    p[0] = ('max',p[3](p[4]))
+
+  def p_min_function(self, p):
+    """min_function : MIN '(' opt_distinct expr ')' """
+    p[0] = ('min',p[3](p[4]))
+
+  def p_sum_function(self, p):
+    """sum_function : SUM '(' opt_distinct expr ')' """
+    p[0] = ('sum',p[3](p[4]))
+
   def p_other_function_empty(self, p):
     """other_function : IDENT '(' ')' """
     p[0] = (p[1].lower())
@@ -614,6 +710,12 @@ class SQLParser(object):
   def p_function_call(self, p):
     """function_call : convert_function
                      | cast_function
+                     | average_function
+                     | bit_function
+                     | count_function
+                     | max_function
+                     | min_function
+                     | sum_function
                      | other_function """
     p[0] = p[1]
 
@@ -1565,7 +1667,7 @@ class SQLParser(object):
     """select_item_list : select_item ',' select_item_list """
     p[0] = [p[1]] + p[3]
 
-  def p_select_item_star(self, p):
+  def p_select_item_list_star(self, p):
     """select_item_list : '*' """
     p[0] = ['*']
 
@@ -1579,7 +1681,7 @@ class SQLParser(object):
 
   def p_order_clause(self, p):
     """order_clause : ORDER BY order_list """
-    p[0] = {'order':p[3]}
+    p[0] = {'order_by':p[3]}
 
   def p_order_ident(self, p):
     """order_ident : expr """
@@ -1587,19 +1689,30 @@ class SQLParser(object):
 
   def p_order_dir_empty(self, p):
     """order_dir : """
-    p[0] = 'natural'
+    p[0] = None
 
   def p_order_dir_asc(self, p):
     """order_dir : ASC """
-    p[0] = 'ascending'
+    p[0] = 'asc'
 
   def p_order_dir_desc(self, p):
     """order_dir : DESC """
-    p[0] = 'descending'
+    p[0] = 'desc'
+
+  def p_order_item(self, p):
+    """order_item : order_ident order_dir """
+    if p[2] == None:
+      p[0] = p[1]
+    else:
+      p[0] = (p[1],p[2])
 
   def p_order_list_single(self, p):
-    """order_list : order_ident order_dir """
-    p[0] = (p[1],p[2])
+    """order_list : order_item """
+    p[0] = [p[1]]
+
+  def p_order_list(self, p):
+    """order_list : order_item ',' order_list """
+    p[0] = [p[1]] + p[3]
 
   def p_opt_limit_clause_empty(self, p):
     """opt_limit_clause : """
@@ -1849,9 +1962,62 @@ class SQLParser(object):
     """where_clause : WHERE expr"""
     p[0] = {'where':p[2]}
 
+  def p_group_clause_empty(self, p):
+    """group_clause : """
+    p[0] = {}
+
+  def p_olap_opt_empty(self, p):
+    """olap_opt : """
+    p[0] = None
+
+  def p_olap_opt_with_cube(self, p):
+    """olap_opt : WITH CUBE """
+    p[0] = 'with_cube'
+
+  def p_olap_opt_with_rollup(self, p):
+    """olap_opt : WITH ROLLUP """
+    p[0] = 'with_rollup'
+
+  def p_group_item(self, p):
+    """group_item : order_item """
+    p[0] = p[1]
+
+  def p_group_list_single(self, p):
+    """group_list : group_item """
+    p[0] = [p[1]]
+
+  def p_group_list(self, p):
+    """group_list : group_item ',' group_list """
+    p[0] = [p[1]] + p[3]
+
+  def p_group_clause(self, p):
+    """group_clause : GROUP BY group_list olap_opt """
+    if p[4] == None:
+      p[0] = {'group_by':p[3]}
+    else:
+      p[0] = {'group_by':(p[3],p[4])}
+
+  def p_having_clause_empty(self, p):
+    """having_clause : """
+    p[0] = {}
+
+  def p_having_clause(self, p):
+    """having_clause : HAVING expr """
+    p[0] = {'having':p[2]}
+
   def p_select_from(self, p):
-    """select_from : FROM join_table_list where_clause """
+    """select_from : FROM join_table_list where_clause group_clause having_clause opt_order_clause opt_limit_clause """
     result = dict({'from':p[2]},**p[3])
+    result.update(p[4])
+    result.update(p[5])
+    result.update(p[6])
+    result.update(p[7])
+    #result.update(p[8])
+    p[0] = result
+
+  def p_select_from_dual(self, p):
+    """select_from : FROM DUAL where_clause opt_limit_clause """
+    result = dict(p[3],**p[4]) # dual is system table without fields, so equivalent to empty FROM
     p[0] = result
 
   def p_select_into_from(self, p):
@@ -2050,9 +2216,11 @@ class SQLParser(object):
     if t.value == self.t_DELIM or t.value == ';' or t.type == 'BEGIN':
       self.last_tokens = []
     else:
-      if not (len(t.type) == 1 and t.type[0] in self.literals):
-        if after(self.last_tokens, ['SELECT']) == 0 \
-          or after(self.last_tokens, ['INSERT','(']) >= 0 and self.level == 1 \
+      if not (isinstance(t.value,basestring) and len(t.value) == 1 and t.value[0] in self.literals):
+        if after(self.last_tokens, ['SELECT']) == 0:
+          if t.type != 'COUNT':
+            t.type = 'IDENT'
+        elif after(self.last_tokens, ['INSERT','(']) >= 0 and self.level == 1 \
           or after(self.last_tokens, ['UPDATE','IDENT','SET']) == 0 \
           or after(self.last_tokens, ['UPDATE','IDENT','SET','IDENT','EQ']) == 0:
           t.type = 'IDENT'
@@ -2064,12 +2232,18 @@ class SQLParser(object):
           if self.last_tokens[len(self.last_tokens)-1] in ['(', ','] and self.level == 1:
             if t.type not in ['CONSTRAINT','PRIMARY','INDEX','KEY','UNIQUE']:
               t.type = 'IDENT'
+      else:
+        if after(self.last_tokens, ['SELECT']) == 0 and t.type == 'TIMES':
+          t.type = '*'
+        elif after(self.last_tokens, ['COUNT', '(']) >= 0 and t.type == 'TIMES':
+          t.type = '*'
       if t.type != 'DELIMITER':
         if t.type == '(':
           self.level += 1
         elif t.type == ')':
           self.level -= 1
         self.last_tokens.append(t.type)
+    print t
     return t
 
   def column(self,p,i):
@@ -2245,12 +2419,12 @@ if __name__ == '__main__':
     k = p.parse(open(f).read(), filename=f)
     all = all + k
 
-  optimized = p.optimize(all)
+  #optimized = p.optimize(all)
 
-  table_index = p.table_index(optimized)
+  #table_index = p.table_index(optimized)
 
-  pprint.pprint(table_index)
+  pprint.pprint(all)
 
-  print '# Before optimization: ' + str(len(all))
-  print '# After optimization: ' + str(len(optimized))
+  #print '# Before optimization: ' + str(len(all))
+  #print '# After optimization: ' + str(len(optimized))
 
