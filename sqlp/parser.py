@@ -130,12 +130,14 @@ class SQLParser(object):
     'decimal':'DECIMAL',
     'declare':'DECLARE',
     'default':'DEFAULT',
+    'delayed':'DELAYED',
     'delete':'DELETE',
     'desc':'DESC',
     'distinct':'DISTINCT',
     'do':'DO',
     'drop':'DROP',
     'dual':'DUAL',
+    'duplicate':'DUPLICATE',
     'each':'EACH',
     'else':'ELSE',
     'elseif':'ELSEIF',
@@ -150,10 +152,10 @@ class SQLParser(object):
     'force':'FORCE',
     'for':'FOR',
     'from':'FROM',
-    'from':'FROM',
     'global':'GLOBAL',
     'group':'GROUP',
     'having':'HAVING',
+    'high_priority':'HIGH_PRIORITY',
     'if':'IF',
     'ignore':'IGNORE',
     'index':'INDEX',
@@ -171,6 +173,7 @@ class SQLParser(object):
     'left':'LEFT',
     'like':'LIKE',
     'limit':'LIMIT',
+    'lock':'LOCK',
     'longblob':'LONGBLOB',
     'longtext':'LONGTEXT',
     'loop':'LOOP',
@@ -180,6 +183,7 @@ class SQLParser(object):
     'mediumint':'MEDIUMINT',
     'mediumtext':'MEDIUMTEXT',
     'min':'MIN',
+    'mode':'MODE',
     'modify':'MODIFY',
     'natural':'NATURAL',
     'next':'NEXT',
@@ -193,13 +197,13 @@ class SQLParser(object):
     'optimize':'OPTIMIZE',
     'order':'ORDER',
     'outer':'OUTER',
-    'outer':'OUTER',
     'primary':'PRIMARY',
     'quick':'QUICK',
     'regexp':'REGEXP',
     'release':'RELEASE',
     'rename':'RENAME',
     'repeat':'REPEAT',
+    'replace':'REPLACE',
     'restrict':'RESTRICT',
     'return':'RETURN',
     'right':'RIGHT',
@@ -209,6 +213,7 @@ class SQLParser(object):
     'select':'SELECT',
     'session':'SESSION',
     'set':'SET',
+    'share':'SHARE',
     'signed':'SIGNED',
     'smallint':'SMALLINT',
     'snapshot':'SNAPSHOT',
@@ -229,6 +234,7 @@ class SQLParser(object):
     'transaction':'TRANSACTION',
     'trigger':'TRIGGER',
     'true':'TRUE',
+    'union':'UNION',
     'unique':'UNIQUE',
     'unknown':'UNKNOWN',
     'unsigned':'UNSIGNED',
@@ -271,6 +277,7 @@ class SQLParser(object):
     'TIMES',
     'DIV',
     'MOD',
+    'SET_VAR',
     'COMMENTS',
     'STRING',
     'FLOAT_LIT',
@@ -316,6 +323,7 @@ class SQLParser(object):
   t_TIMES = r'\*'
   t_DIV = r'/'
   t_MOD = r'%'
+  t_SET_VAR = r':='
   t_PLUS = r'\+'
   t_MINUS = r'-'
   t_EQ = r'='
@@ -564,9 +572,9 @@ class SQLParser(object):
                | NUMBER
                | FLOAT_LIT """
     if isinstance(p[1], basestring):
-      p[0] = "'" + str(p[1]) + "'"
+      p[0] = ('value',"'" + str(p[1]) + "'")
     else:
-      p[0] = str(p[1])
+      p[0] = ('value',p[1])
 
   def p_simple_expr_literal(self, p):
     """simple_expr : literal """
@@ -1239,52 +1247,346 @@ class SQLParser(object):
     """alter_table : ALTER TABLE IDENT alter_specifications """
     p[0] = [tuple([x[0],p[3]] + list(x)[2:]) for x in p[4]]
 
-  def p_ignore_into(self, p):
-    """ignore_into : INTO
-                   | """
-    pass
+  # Insert : add new data to table
 
-  def p_check_values_or_value(self, p):
-    """check_values_or_value : VALUES
-                             | VALUE """
-    pass
+  def p_opt_insert_update_empty(self, p):
+    """opt_insert_update : """
+    p[0] = {}
 
-  def p_default_or_value_default(self, p):
-    """default_or_value : DEFAULT """
-    p[0] = 'DEFAULT'
-
-  def p_default_or_value_value(self, p):
-    """default_or_value : value """
+  def p_table_ident(self, p):
+    """table_ident : IDENT """
     p[0] = p[1]
 
-  def p_default_or_values_single(self, p):
-    """default_or_values : default_or_value """
+  def p_table_name(self, p):
+    """table_name : table_ident """
+    p[0] = ('table_ref',p[1])
+
+  def p_insert_table(self, p):
+    """insert_table : table_name """
+    p[0] = p[1]
+
+  def p_expr_or_default1(self, p):
+    """expr_or_default : expr """
+    p[0] = p[1]
+
+  def p_expr_or_default2(self, p):
+    """expr_or_default : DEFAULT """
+    p[0] = 'default'
+
+  def p_equal(self, p):
+    """equal : EQ
+             | SET_VAR """
+    pass
+
+  def p_simple_ident_nospvar(self, p):
+    """simple_ident_nospvar : IDENT """
+    p[0] = p[1]
+
+  def p_insert_update_elem(self, p):
+    """insert_update_elem : simple_ident_nospvar equal expr_or_default """
+    p[0] = (p[1],p[3])
+
+  def p_insert_update_list_single(self, p):
+    """insert_update_list : insert_update_elem """
     p[0] = [p[1]]
 
-  def p_default_or_values(self, p):
-    """default_or_values : default_or_value ',' default_or_values """
+  def p_insert_update_list(self, p):
+    """insert_update_list : insert_update_elem ',' insert_update_list """
     p[0] = [p[1]] + p[3]
 
-  def p_default_or_values_list_single(self, p):
-    """default_or_values_list : '(' default_or_values ')' """
-    p[0] = [tuple(p[2])]
+  def p_opt_insert_update(self, p):
+    """opt_insert_update : ON DUPLICATE KEY UPDATE insert_update_list """
+    p[0] = {'on_duplicate':p[5]}
 
-  def p_default_or_values_list(self, p):
-    """default_or_values_list : '(' default_or_values ')' ',' default_or_values_list """
-    p[0] = [tuple(p[2])] + p[5]
+  def p_insert_ident1(self, p):
+    """insert_ident : simple_ident_nospvar """
+    p[0] = p[1]
+
+  def p_insert_ident2(self, p):
+    """insert_ident : table_wild """
+    p[0] = p[1]
+
+  def p_fields_single(self, p):
+    """fields : insert_ident """
+    p[0] = [p[1]]
+
+  def p_fields(self, p):
+    """fields : insert_ident ',' fields """
+    p[0] = [p[1]] + p[3]
+
+  def p_opt_values_empty(self, p):
+    """opt_values : """
+    p[0] = []
+
+  def p_opt_values(self, p):
+    """opt_values : values """
+    p[0] = p[1]
+
+  def p_values_single(self, p):
+    """values : expr_or_default """
+    p[0] = [p[1]]
+
+  def p_values(self, p):
+    """values : expr_or_default ',' values """
+    p[0] = [p[1]] + p[3]
+
+  def p_no_braces(self, p):
+    """no_braces : '(' opt_values ')' """
+    p[0] = p[2]
+
+  def p_values_list_single(self, p):
+    """values_list : no_braces """
+    p[0] = [p[1]]
+
+  def p_values_list(self, p):
+    """values_list : no_braces ',' values_list """
+    p[0] = [p[1]] + p[3]
+
+  def p_insert_values1(self, p):
+    """insert_values : VALUES values_list """
+    p[0] = p[2]
+
+  def p_insert_values2(self, p):
+    """insert_values : VALUE values_list """
+    p[0] = p[2]
+
+  def p_opt_create_from1(self, p):
+    """opt_select_from : opt_limit_clause """
+    p[0] = p[1]
+
+  def p_select_lock_type_empty(self, p):
+    """select_lock_type : """
+    p[0] = {}
+
+  def p_select_lock_type1(self, p):
+    """select_lock_type : FOR UPDATE """
+    p[0] = {'lock':'for_update'}
+
+  def p_select_lock_type2(self, p):
+    """select_lock_type : LOCK IN SHARE MODE """
+    p[0] = {'lock':'in_share'}
+
+  def p_opt_create_from2(self, p):
+    """opt_select_from : select_from select_lock_type """
+    p[0] = dict(p[1],**p[2])
+
+  def p_create_select(self, p):
+    """create_select : SELECT select_options select_item_list opt_select_from """
+    args = dict(p[2],**p[4])
+    p[0] = ('select',p[3],args)
+
+  def p_union_option_empty(self, p):
+    """union_option : """
+    p[0] = {}
+
+  def p_union_option_distinct(self, p):
+    """union_option : DISTINCT """
+    p[0] = {'distinct':True}
+
+  def p_union_option_all(self, p):
+    """union_option : ALL """
+    p[0] = {'all':True}
+
+  def p_select_part2(self, p):
+    """select_part2 : select_options select_item_list select_into select_lock_type """
+    args = dict(p[1],**p[3])
+    args.update(p[4])
+    p[0] = ('select',p[2],args)
+
+
+
+
+
+
+# -----------------------------------------------------------------
+
+  def p_union_opt_empty(self, p):
+    """union_opt : """
+    p[0] = lambda x: x
+
+  def p_union_opt(self, p):
+    """union_opt : union_list """
+    p[0] = p[1]
+
+  def p_opt_limit_clause_init_empty(self, p):
+    """opt_limit_clause_init : """
+    p[0] = {}
+
+  def p_opt_limit_clause_init(self, p):
+    """opt_limit_clause_init : limit_clause """
+    p[0] = p[1]
+
+  def p_order_or_limit1(self, p):
+    """order_or_limit : order_clause opt_limit_clause_init """
+    p[0] = dict(p[1],**p[2])
+
+  def p_order_or_limit2(self, p):
+    """order_or_limit : limit_clause """
+    p[0] = p[1]
+
+  def p_union_order_or_limit(self, p):
+    """union_order_or_limit : order_or_limit """
+    p[0] = p[1]
+
+  def p_union_opt_last(self, p):
+    """union_opt : union_order_or_limit """
+    args = p[1]
+    def update_args(x):
+      if len(x) == 3:
+        return (x[0],x[1],x[2],args)
+      else:
+        return (x[0],x[1],x[2],dict(x[3],**args))
+    p[0] = update_args
+
+  def p_select_paren1(self, p):
+    """select_paren : SELECT select_init2 """
+    p[0] = p[2]
+
+  def p_select_paren2(self, p):
+    """select_paren : '(' select_paren ')' """
+    p[0] = p[2]
+
+  def p_union_select_init1(self, p):
+    """union_select_init : SELECT select_init2 """
+    y = p[2]
+    p[0] = lambda x: ('union',x,y)
+
+  def p_union_select_init2(self, p):
+    """union_select_init : '(' select_paren ')' union_opt """
+    f = p[4]
+    y = p[2]
+    p[0] = lambda x: f(('union',x,y))
+
+  def p_union_list(self, p):
+    """union_list : UNION union_option union_select_init """
+    if len(p[2]) == 0:
+      p[0] = p[3]
+    else:
+      f = p[3]
+      args = p[2]
+      def update_args(x):
+        v = f(x)
+        if len(v) == 3:
+          return (v[0],v[1],v[2],args)
+        else:
+          return (v[0],v[1],v[2],dict(v[3],**args))
+      p[0] = update_args
+
+  def p_union_clause_empty(self, p):
+    """union_clause : """
+    p[0] = lambda x: x
+
+  def p_union_clause(self, p):
+    """union_clause : union_list """
+    p[0] = p[1]
+
+  def p_select_init2(self, p):
+    """select_init2 : select_part2 union_clause """
+    p[0] = p[2](p[1])
+
+  def p_insert_values3(self, p):
+    """insert_values : create_select union_clause """
+    p[0] = p[2](p[1])
+
+  def p_insert_values4(self, p):
+    """insert_values : '(' create_select ')' union_opt """
+    p[0] = p[4](p[2])
+
+# -----------------------------------------------------------------
+
+
+
+
+
+  def p_insert_field_spec1(self, p):
+    """insert_field_spec : insert_values """
+    p[0] = {'fields':[],'insert_values':p[1]}
+
+  def p_insert_field_spec2(self, p):
+    """insert_field_spec : '(' ')' insert_values """
+    p[0] = {'fields':[],'insert_values':p[3]}
+
+  def p_insert_field_spec3(self, p):
+    """insert_field_spec : '(' fields ')' insert_values """
+    p[0] = {'fields':p[2],'insert_values':p[4]}
+
+  def p_ident_eq_value(self, p):
+    """ident_eq_value : simple_ident_nospvar equal expr_or_default """
+    p[0] = (p[1],p[3])
+
+  def p_ident_eq_list_single(self, p):
+    """ident_eq_list : ident_eq_value """
+    p[0] = [p[1]]
+
+  def p_ident_eq_list(self, p):
+    """ident_eq_list : ident_eq_value ',' ident_eq_list """
+    p[0] = [p[1]] + p[3]
+
+  def p_insert_field_spec4(self, p):
+    """insert_field_spec : SET ident_eq_list """
+    p[0] = {'fields':[k for k,v in p[2]],'insert_values':[v for k,v in p[2]]}
+
+  def p_insert2_into(self, p):
+    """insert2 : INTO insert_table """
+    p[0] = p[2]
+
+  def p_insert2(self, p):
+    """insert2 : insert_table """
+    p[0] = p[1]
+
+  def p_opt_ignore_empty(self, p):
+    """opt_ignore : """
+    p[0] = {}
+
+  def p_opt_ignore(self, p):
+    """opt_ignore : IGNORE """
+    p[0] = {'ignore':True}
+
+  def p_insert_lock_option_empty(self, p):
+    """insert_lock_option : """
+    p[0] = {}
+
+  def p_insert_lock_option_low_priority(self, p):
+    """insert_lock_option : LOW_PRIORITY """
+    p[0] = {'lock':'low_priority'}
+
+  def p_insert_lock_option_delayed(self, p):
+    """insert_lock_option : DELAYED """
+    p[0] = {'lock':'delayed'}
+
+  def p_insert_lock_option_high_priority(self, p):
+    """insert_lock_option : HIGH_PRIORITY """
+    p[0] = {'lock':'high_priority'}
 
   def p_insert(self, p):
-    """insert : INSERT ignore_into IDENT '(' column_names ')' check_values_or_value default_or_values_list """
-    p[0] = [('insert',p[3],p[5],p[8],{'location':self._location(p)})]
+    """insert : INSERT insert_lock_option opt_ignore insert2 insert_field_spec opt_insert_update """
+    args = dict({'location':self._location(p)},**p[2])
+    args.update(p[3])
+    args.update(p[6])
+    p[0] = [('insert',p[4],p[5]['fields'],p[5]['insert_values'],args)]
 
-  def p_insert_natural(self, p):
-    """insert : INSERT ignore_into IDENT check_values_or_value default_or_values_list """
-    p[0] = [('insert',p[3],[],p[5],{'location':self._location(p)})]
+  def p_opt_low_priority_empty(self, p):
+    """opt_low_priority : """
+    p[0] = {}
 
-  def p_expr_or_default(self, p):
-    """expr_or_default : expr
-                       | DEFAULT """
+  def p_opt_low_priority(self, p):
+    """opt_low_priority : LOW_PRIORITY """
+    p[0] = {'lock':'low_priority'}
+
+  def p_replace_lock_option_low_priority(self, p):
+    """replace_lock_option : opt_low_priority """
     p[0] = p[1]
+
+  def p_replace_lock_option_delayed(self, p):
+    """replace_lock_option : DELAYED """
+    p[0] = {'lock':'delayed'}
+
+  def p_replace(self, p):
+    """replace : REPLACE replace_lock_option insert2 insert_field_spec """
+    args = dict({'location':self._location(p)},**p[2])
+    p[0] = [('replace',p[3],p[4]['fields'],p[4]['insert_values'],args)]
+
+  # Update rows in a table
 
   def p_key_value_value(self, p):
     """key_value : IDENT EQ expr_or_default """
@@ -2032,12 +2334,21 @@ class SQLParser(object):
     """select_into : select_from into """
     p[0] = dict(p[1],**p[2])
 
+  def p_top_level_select_init(self, p):
+    """top_level_select_init : SELECT select_init2 """
+    p[0] = p[2]
+
   def p_select(self, p):
-    """select : SELECT select_options select_item_list select_into """
-    args = dict({'location':self._location(p)},**p[2])
-    args.update({'items':p[3]})
-    args.update(p[4])
-    p[0] = [('select',args)]
+    """select : top_level_select_init """
+    result = p[1]
+    if result[0] == 'select':
+      result[2].update({'location':self._location(p)})
+    elif result[0] == 'union':
+      if len(result) == 3:
+        result = (result[0],result[1],result[2],{'location':self._location(p)})
+      else:
+        result = (result[0],result[1],result[2],dict({'location':self._location(p)},**result[3]))
+    p[0] = [result]
 
   def p_variable_assignment_user_var(self, p):
     """variable_assignment : IDENT EQ expr """
@@ -2065,8 +2376,8 @@ class SQLParser(object):
 
   def p_create_view(self, p):
     """create_view : CREATE VIEW IDENT AS select """
-    select = p[5][0][1]
-    del select['location']
+    select = p[5][0]
+    del select[2]['location']
     p[0] = [('create_view',p[3],select,{'location':self._location(p)})]
 
   def p_drop_trigger(self, p):
@@ -2166,6 +2477,7 @@ class SQLParser(object):
                  | drop_trigger
                  | drop_view
                  | insert
+                 | replace
                  | optimize_table
                  | rename_table
                  | select
@@ -2243,7 +2555,6 @@ class SQLParser(object):
         elif t.type == ')':
           self.level -= 1
         self.last_tokens.append(t.type)
-    print t
     return t
 
   def column(self,p,i):
@@ -2274,12 +2585,12 @@ class SQLParser(object):
   def __init__(self, outputdir=os.path.join(os.path.dirname(__file__)), debug=0):
     self.delim = self.t_DELIM
     self.lexer = lex.lex(object=self,
-                         debug=debug,
+                         debug=True if debug else False,
                          outputdir=outputdir,
                          lextab='sqlplex',
                          optimize=1)
     self.parser = yacc.yacc(start='statements',
-                            debug=debug,
+                            debug=True if debug else False,
                             module=self,
                             outputdir=outputdir,
                             debugfile='sqlp_debug',
